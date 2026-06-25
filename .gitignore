@@ -1,0 +1,9 @@
+.vs/
+bin/
+obj/
+
+data/**
+!data/
+!data/**/
+!data/**/*.ipynb
+data/**/.ipynb_checkpoints/
