@@ -19,8 +19,12 @@ module Program =
             MatchKind: string
             StructureVolumeCc: string
             HasDose: string
-            MayoQuery: string
             MetricId: string
+            OriginalPrescriptionGy: string
+            IntendedFractions: string
+            CurrentFractions: string
+            FullCourseDoseThresholdGy: string
+            MayoQuery: string
         }
 
     /// Represents one accepted plan dose-context debug row.
@@ -29,18 +33,14 @@ module Program =
             PatientId: string
             CourseId: string
             PlanId: string
-            PlanName: string
             HasDose: string
             DoseMax3DGy: string
-            DoseMax3DcGy: string
             TotalDoseGy: string
-            TotalDosePerFractionGy: string
+            DosePerFractionGy: string
             NumberOfFractions: string
             TreatmentPercentage: string
             PlanNormalizationValue: string
-            DoseValuePresentationHint: string
             StructureSetId: string
-            ImageId: string
             ApprovalStatus: string
             CreationDateTime: string
         }
@@ -76,6 +76,24 @@ module Program =
     let debugMayoQuery (plan: PlanSetup) (metric: MetricDefinition) =
         match Prescription.findOriginalPrescriptionFromPtv1 plan with
         | Ok prescription -> MetricExtraction.buildMayoQuery prescription metric
+        | Error _ -> ""
+
+    /// Gets the inferred original prescription Gy text for one accepted plan.
+    let debugOriginalPrescriptionGy (plan: PlanSetup) =
+        match Prescription.findOriginalPrescriptionFromPtv1 plan with
+        | Ok prescription -> MetricExtraction.floatText prescription.OriginalPrescriptionGy
+        | Error _ -> ""
+
+    /// Gets the inferred intended fraction count text for one accepted plan.
+    let debugIntendedFractions (plan: PlanSetup) =
+        match Prescription.findOriginalPrescriptionFromPtv1 plan with
+        | Ok prescription -> string prescription.IntendedFractions
+        | Error _ -> ""
+
+    /// Gets the current fraction count text for one accepted plan when it is available.
+    let debugCurrentFractions (plan: PlanSetup) =
+        match MetricExtraction.currentFractions plan with
+        | Ok value -> string value
         | Error _ -> ""
 
     /// Gets whether the plan has dose available.
@@ -122,6 +140,10 @@ module Program =
     /// Creates one plan-debug row for one accepted plan metric.
     let createPlanDebugRow patientId (course: Course) (plan: PlanSetup) (metric: MetricDefinition) =
         let requestedStructureId = configMetricStructureId metric
+        let originalPrescriptionGy = debugOriginalPrescriptionGy plan
+        let intendedFractions = debugIntendedFractions plan
+        let currentFractions = debugCurrentFractions plan
+        let fullCourseDoseThresholdGy = MetricExtraction.fullCourseDoseThresholdGyText metric
         let mayoQuery = debugMayoQuery plan metric
 
         try
@@ -136,8 +158,12 @@ module Program =
                     MatchKind = "Missing"
                     StructureVolumeCc = "MissingStructure"
                     HasDose = hasDose plan
-                    MayoQuery = mayoQuery
                     MetricId = metric.Id
+                    OriginalPrescriptionGy = originalPrescriptionGy
+                    IntendedFractions = intendedFractions
+                    CurrentFractions = currentFractions
+                    FullCourseDoseThresholdGy = fullCourseDoseThresholdGy
+                    MayoQuery = mayoQuery
                 }
             | Some structureMatch ->
                 {
@@ -149,8 +175,12 @@ module Program =
                     MatchKind = structureMatch.MatchKind
                     StructureVolumeCc = structureVolumeText structureMatch.Structure
                     HasDose = hasDose plan
-                    MayoQuery = mayoQuery
                     MetricId = metric.Id
+                    OriginalPrescriptionGy = originalPrescriptionGy
+                    IntendedFractions = intendedFractions
+                    CurrentFractions = currentFractions
+                    FullCourseDoseThresholdGy = fullCourseDoseThresholdGy
+                    MayoQuery = mayoQuery
                 }
         with ex ->
             {
@@ -162,8 +192,12 @@ module Program =
                 MatchKind = "Error"
                 StructureVolumeCc = "ERROR: " + ex.Message
                 HasDose = hasDose plan
-                MayoQuery = mayoQuery
                 MetricId = metric.Id
+                OriginalPrescriptionGy = originalPrescriptionGy
+                IntendedFractions = intendedFractions
+                CurrentFractions = currentFractions
+                FullCourseDoseThresholdGy = fullCourseDoseThresholdGy
+                MayoQuery = mayoQuery
             }
 
     /// Creates debug rows for accepted plan structures.
@@ -178,28 +212,18 @@ module Program =
             else
                 safeText (fun () -> doseValueGyText plan.Dose.DoseMax3D)
 
-        let doseMax3DcGy =
-            if isNull plan.Dose then
-                ""
-            else
-                safeText (fun () -> doseValueCGyText plan.Dose.DoseMax3D)
-
         {
             PatientId = patientId
             CourseId = course.Id
             PlanId = safeText (fun () -> plan.Id)
-            PlanName = safeText (fun () -> plan.Name)
             HasDose = hasDose plan
             DoseMax3DGy = doseMax3DGy
-            DoseMax3DcGy = doseMax3DcGy
             TotalDoseGy = safeText (fun () -> doseValueGyText plan.TotalDose)
-            TotalDosePerFractionGy = safeText (fun () -> doseValueGyText plan.DosePerFraction)
+            DosePerFractionGy = safeText (fun () -> doseValueGyText plan.DosePerFraction)
             NumberOfFractions = safeText (fun () -> string plan.NumberOfFractions)
             TreatmentPercentage = safeText (fun () -> string plan.TreatmentPercentage)
             PlanNormalizationValue = safeText (fun () -> string plan.PlanNormalizationValue)
-            DoseValuePresentationHint = safeText (fun () -> plan.DoseValuePresentation.ToString())
             StructureSetId = safeText (fun () -> if isNull plan.StructureSet then "" else plan.StructureSet.Id)
-            ImageId = safeText (fun () -> if isNull plan.StructureSet || isNull plan.StructureSet.Image then "" else plan.StructureSet.Image.Id)
             ApprovalStatus = safeText (fun () -> plan.ApprovalStatus.ToString())
             CreationDateTime = safeText (fun () -> string plan.CreationDateTime)
         }
@@ -215,15 +239,19 @@ module Program =
             row.MatchKind
             row.StructureVolumeCc
             row.HasDose
-            row.MayoQuery
             row.MetricId
+            row.OriginalPrescriptionGy
+            row.IntendedFractions
+            row.CurrentFractions
+            row.FullCourseDoseThresholdGy
+            row.MayoQuery
         ]
         |> List.map Csv.escape
         |> String.concat ","
 
     /// Writes plan debug rows to the target CSV path.
     let writeDebugRows (path: string) (rows: PlanDebugRow list) =
-        let header = "PatientId,CourseId,PlanId,RequestedStructureId,ActualStructureId,MatchKind,StructureVolumeCc,HasDose,MayoQuery,MetricId"
+        let header = "PatientId,CourseId,PlanId,RequestedStructureId,ActualStructureId,MatchKind,StructureVolumeCc,HasDose,MetricId,OriginalPrescriptionGy,IntendedFractions,CurrentFractions,FullCourseDoseThresholdGy,MayoQuery"
         let lines = rows |> List.map debugRowToCsv
         File.WriteAllLines(path, header :: lines, Encoding.UTF8)
 
@@ -233,18 +261,14 @@ module Program =
             row.PatientId
             row.CourseId
             row.PlanId
-            row.PlanName
             row.HasDose
             row.DoseMax3DGy
-            row.DoseMax3DcGy
             row.TotalDoseGy
-            row.TotalDosePerFractionGy
+            row.DosePerFractionGy
             row.NumberOfFractions
             row.TreatmentPercentage
             row.PlanNormalizationValue
-            row.DoseValuePresentationHint
             row.StructureSetId
-            row.ImageId
             row.ApprovalStatus
             row.CreationDateTime
         ]
@@ -253,7 +277,7 @@ module Program =
 
     /// Writes plan dose debug rows to the target CSV path.
     let writePlanDoseDebugRows (path: string) (rows: PlanDoseDebugRow list) =
-        let header = "PatientId,CourseId,PlanId,PlanName,HasDose,DoseMax3DGy,DoseMax3DcGy,TotalDoseGy,TotalDosePerFractionGy,NumberOfFractions,TreatmentPercentage,PlanNormalizationValue,DoseValuePresentationHint,StructureSetId,ImageId,ApprovalStatus,CreationDateTime"
+        let header = "PatientId,CourseId,PlanId,HasDose,DoseMax3DGy,TotalDoseGy,DosePerFractionGy,NumberOfFractions,TreatmentPercentage,PlanNormalizationValue,StructureSetId,ApprovalStatus,CreationDateTime"
         let lines = rows |> List.map planDoseDebugRowToCsv
         File.WriteAllLines(path, header :: lines, Encoding.UTF8)
 
@@ -304,6 +328,15 @@ module Program =
         |> Seq.sortBy fst
         |> Seq.iter (fun (key, count) -> printfn "  %s=%s Count=%d" keyName key count)
 
+    /// Writes summary counts for one sequence of paired values.
+    let printPairSummary label leftName rightName values =
+        printfn "%s" label
+
+        values
+        |> Seq.countBy id
+        |> Seq.sortBy fst
+        |> Seq.iter (fun ((left, right), count) -> printfn "  %s=%s %s=%s Count=%d" leftName left rightName right count)
+
     /// Creates the ESAPI application session.
     let createApplication () =
         try
@@ -348,9 +381,22 @@ module Program =
             let rows = patientResults |> List.collect (fun (metricRows, _, _) -> metricRows)
             let debugRows = patientResults |> List.collect (fun (_, planDebugRows, _) -> planDebugRows)
             let planDoseDebugRows = patientResults |> List.collect (fun (_, _, doseRows) -> doseRows)
+            let uniquePatientCount =
+                rows
+                |> Seq.map (fun row -> row.PatientId)
+                |> Seq.filter (String.IsNullOrWhiteSpace >> not)
+                |> Seq.distinct
+                |> Seq.length
+            let uniqueSessionCount =
+                rows
+                |> Seq.map (fun row -> row.PatientId, row.CourseId)
+                |> Seq.filter (fun (_, courseId) -> not (String.IsNullOrWhiteSpace courseId))
+                |> Seq.distinct
+                |> Seq.length
             let uniquePlanCount =
-                planDoseDebugRows
+                rows
                 |> Seq.map (fun row -> row.PatientId, row.CourseId, row.PlanId)
+                |> Seq.filter (fun (_, _, planId) -> not (String.IsNullOrWhiteSpace planId))
                 |> Seq.distinct
                 |> Seq.length
 
@@ -358,12 +404,18 @@ module Program =
             writeDebugRows debugPath debugRows
             writePlanDoseDebugRows planDoseDebugPath planDoseDebugRows
             printfn "Wrote %d metric rows to %s" rows.Length outputPath
-            printSummary "Metric status summary:" "Status" (rows |> Seq.map (fun row -> row.Status))
+            printfn "Unique patients=%d" uniquePatientCount
+            printfn "Unique sessions=%d" uniqueSessionCount
+            printfn "Unique plans=%d" uniquePlanCount
+            printSummary "Rows by status:" "Status" (rows |> Seq.map (fun row -> row.Status))
+            printPairSummary
+                "Rows by requested-to-actual structure id:"
+                "RequestedStructureId"
+                "ActualStructureId"
+                (rows |> Seq.map (fun row -> row.RequestedStructureId, row.ActualStructureId))
             printfn "Wrote %d debug rows to %s" debugRows.Length debugPath
             printSummary "Debug match summary:" "MatchKind" (debugRows |> Seq.map (fun row -> row.MatchKind))
             printfn "Wrote %d plan dose debug rows to %s" planDoseDebugRows.Length planDoseDebugPath
-            printSummary "Plan dose debug HasDose summary:" "HasDose" (planDoseDebugRows |> Seq.map (fun row -> row.HasDose))
-            printfn "Unique plans=%d" uniquePlanCount
             0
 
     /// Runs the console entry point.
