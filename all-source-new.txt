@@ -1,0 +1,679 @@
+﻿
+
+==================== C:\Dev\projects\functional-esapi-pqm-extractor\Config.fs ====================
+
+namespace Functional.Esapi.PqmExtractor
+
+module Config =
+
+    /// Returns the hardcoded research patient ids.
+    let patientIds =
+        [
+            "99DART-HN_1"
+            "99DART-HN_2"
+            "99DART-HN_3"
+            "99DART-HN_4"
+            "99DART-HN_5"
+            "99DART-HN_6"
+            "99DART-HN_7"
+            "99DART-HN_8"
+            "99DART-HN_9"
+            "99DART-HN_10"
+        ]
+
+    /// Returns the hardcoded plan-quality metrics.
+    let metrics =
+        [
+            { Id = "V95% PTV2"; Kind = MayoQuery("V57Gy[%]", "PTV2"); Unit = "%" }
+            { Id = "V95% PTV3"; Kind = MayoQuery("V47.5Gy[%]", "PTV3"); Unit = "%" }
+            { Id = "V107%/V64.2Gy PTV2-PTV1"; Kind = MayoQuery("V64.2Gy[%]", "PTV2-PTV1"); Unit = "%" }
+            { Id = "V107%/V53.5Gy PTV3-PTV2"; Kind = MayoQuery("V53.5Gy[%]", "PTV3-PTV2"); Unit = "%" }
+            { Id = "D1.8cm3 PTV1"; Kind = MayoQuery("D1.8cc[Gy]", "PTV1"); Unit = "Gy" }
+        ]
+
+
+==================== C:\Dev\projects\functional-esapi-pqm-extractor\Csv.fs ====================
+
+namespace Functional.Esapi.PqmExtractor
+
+open System.IO
+open System.Text
+
+module Csv =
+
+    /// Escapes one CSV field.
+    let escape (value: string) =
+        let safe = if isNull value then "" else value
+
+        if safe.Contains(",") || safe.Contains("\"") || safe.Contains("\r") || safe.Contains("\n") then
+            "\"" + safe.Replace("\"", "\"\"") + "\""
+        else
+            safe
+
+    /// Converts one metric row to a CSV line.
+    let rowToCsv (row: MetricRow) =
+        [
+            row.PatientId
+            row.CourseId
+            row.PlanId
+            row.RequestedStructureId
+            row.ActualStructureId
+            row.MetricId
+            row.MayoQuery
+            row.Value
+            row.Unit
+            row.Status
+            row.Error
+        ]
+        |> List.map escape
+        |> String.concat ","
+
+    /// Writes metric rows to the target CSV path.
+    let writeRows (path: string) (rows: MetricRow list) =
+        let header = "PatientId,CourseId,PlanId,RequestedStructureId,ActualStructureId,MetricId,MayoQuery,Value,Unit,Status,Error"
+        let lines = rows |> List.map rowToCsv
+        File.WriteAllLines(path, header :: lines, Encoding.UTF8)
+
+
+==================== C:\Dev\projects\functional-esapi-pqm-extractor\Domain.fs ====================
+
+namespace Functional.Esapi.PqmExtractor
+
+/// Represents the supported metric calculation kinds.
+type MetricKind =
+    | MayoQuery of query: string * structureId: string
+
+/// Represents one configured metric definition.
+type MetricDefinition =
+    {
+        Id: string
+        Kind: MetricKind
+        Unit: string
+    }
+
+/// Represents one extracted metric row in the CSV output.
+type MetricRow =
+    {
+        PatientId: string
+        CourseId: string
+        PlanId: string
+        RequestedStructureId: string
+        ActualStructureId: string
+        MetricId: string
+        MayoQuery: string
+        Value: string
+        Unit: string
+        Status: string
+        Error: string
+    }
+
+
+==================== C:\Dev\projects\functional-esapi-pqm-extractor\EsapiQuery.fs ====================
+
+namespace Functional.Esapi.PqmExtractor
+
+open System
+open System.Globalization
+open System.Text.RegularExpressions
+open ESAPIX.Extensions
+open FsToolkit.ErrorHandling
+open VMS.TPS.Common.Model.API
+
+module EsapiQuery =
+
+    /// Represents how a requested structure id was matched.
+    type StructureMatch =
+        {
+            RequestedStructureId: string
+            ActualStructureId: string
+            Structure: Structure
+            MatchKind: string
+        }
+
+    /// Opens one patient by direct id or by matching visible patient summary fields.
+    let openPatientById (app: Application) (patientId: string) : Result<Patient, string> =
+        try
+            let directPatient = app.OpenPatientById patientId
+
+            if not (isNull directPatient) then
+                Ok directPatient
+            else
+                let normalize (value: string) =
+                    if isNull value then "" else value.Trim()
+
+                let equalsIgnoreCase expected actual =
+                    String.Equals(normalize expected, normalize actual, StringComparison.OrdinalIgnoreCase)
+
+                let containsIgnoreCase expected actual =
+                    let expectedValue = normalize expected
+                    let actualValue = normalize actual
+
+                    if String.IsNullOrWhiteSpace expectedValue || String.IsNullOrWhiteSpace actualValue then
+                        false
+                    else
+                        actualValue.IndexOf(expectedValue, StringComparison.OrdinalIgnoreCase) >= 0
+
+                let matchesSummary (summary: PatientSummary) =
+                    equalsIgnoreCase patientId summary.Id
+                    || equalsIgnoreCase patientId summary.Id2
+                    || equalsIgnoreCase patientId summary.LastName
+                    || equalsIgnoreCase patientId summary.FirstName
+                    || containsIgnoreCase patientId summary.Id
+                    || containsIgnoreCase patientId summary.Id2
+                    || containsIgnoreCase patientId summary.LastName
+                    || containsIgnoreCase patientId summary.FirstName
+
+                let matches =
+                    app.PatientSummaries
+                    |> Seq.filter matchesSummary
+                    |> Seq.truncate 10
+                    |> Seq.toList
+
+                match matches with
+                | [] ->
+                    Error(sprintf "Patient not found by direct id or PatientSummaries search: %s" patientId)
+
+                | [ summary ] ->
+                    let patient = app.OpenPatient(summary)
+
+                    if isNull patient then
+                        Error(sprintf "PatientSummary matched input '%s' with Id='%s', Id2='%s', Name='%s, %s', but app.OpenPatient(summary) returned null." patientId summary.Id summary.Id2 summary.LastName summary.FirstName)
+                    else
+                        Ok patient
+
+                | many ->
+                    let descriptions =
+                        many
+                        |> List.map (fun summary ->
+                            sprintf "Id='%s'; Id2='%s'; Name='%s, %s'" summary.Id summary.Id2 summary.LastName summary.FirstName)
+                        |> String.concat " | "
+
+                    Error(sprintf "Ambiguous patient input '%s'. Matches: %s" patientId descriptions)
+        with ex ->
+            Error(sprintf "Could not open patient %s: %s" patientId ex.Message)
+
+    /// Closes the currently opened patient if possible.
+    let closePatient (app: Application) =
+        try
+            app.ClosePatient()
+        with _ ->
+            ()
+
+    /// Checks whether course id matches the hardcoded filter.
+    let courseMatches (course: Course) = Text.containsIgnoreCase "session" course.Id
+
+    /// Checks whether plan id matches the hardcoded filter.
+    let planMatches (plan: PlanSetup) =
+        Text.notContainsIgnoreCase "R" plan.Id
+        && not (isNull plan.Id)
+        && plan.Id.Contains("/")
+
+    /// Gets all matching plans for a patient.
+    let getMatchingPlans (patient: Patient) =
+        patient.Courses
+        |> Seq.filter courseMatches
+        |> Seq.collect (fun course ->
+            course.PlanSetups
+            |> Seq.filter planMatches
+            |> Seq.map (fun plan -> course, plan))
+        |> Seq.toList
+
+    /// Removes a trailing underscore-plus-two-digits dose suffix from one structure id segment.
+    let removeTrailingDoseSuffix (value: string) =
+        if String.IsNullOrWhiteSpace value then value
+        else
+            Regex.Replace(value.Trim(), "_\\d{2}$", "")
+
+    /// Normalizes structure ids for lookup by removing dose suffixes from each hyphen-delimited segment.
+    let normalizeStructureIdForLookup (value: string) =
+        if isNull value then ""
+        else
+            value.Split([| '-' |], StringSplitOptions.None)
+            |> Array.map removeTrailingDoseSuffix
+            |> String.concat "-"
+
+    /// Finds a structure by exact id only.
+    let tryFindStructureExactOnly (plan: PlanSetup) (structureId: string) =
+        if isNull plan.StructureSet then None
+        else
+            plan.StructureSet.Structures
+            |> Seq.tryFind (fun structure ->
+                String.Equals(structure.Id, structureId, StringComparison.Ordinal))
+
+    /// Finds a structure by exact id first and normalized id second.
+    let tryFindStructureForMetric (plan: PlanSetup) (requestedStructureId: string) =
+        match tryFindStructureExactOnly plan requestedStructureId with
+        | Some structure ->
+            Some
+                {
+                    RequestedStructureId = requestedStructureId
+                    ActualStructureId = structure.Id
+                    Structure = structure
+                    MatchKind = "Exact"
+                }
+        | None ->
+            if isNull plan.StructureSet then None
+            else
+                let normalizedTargetId = normalizeStructureIdForLookup requestedStructureId
+
+                plan.StructureSet.Structures
+                |> Seq.filter (fun structure ->
+                    String.Equals(normalizeStructureIdForLookup structure.Id, normalizedTargetId, StringComparison.Ordinal))
+                |> Seq.toList
+                |> function
+                    | [ structure ] ->
+                        Some
+                            {
+                                RequestedStructureId = requestedStructureId
+                                ActualStructureId = structure.Id
+                                Structure = structure
+                                MatchKind = "Normalized"
+                            }
+                    | [] -> None
+                    | many ->
+                        let ids = many |> List.map (fun s -> s.Id) |> String.concat " | "
+                        failwithf "Ambiguous normalized structure match for requested '%s'. Candidates: %s" requestedStructureId ids
+
+    /// Gets the structure id from one metric definition.
+    let metricStructureId (metric: MetricDefinition) =
+        match metric.Kind with
+        | MayoQuery(_, structureId) -> structureId
+
+    /// Creates a missing-structure metric row.
+    let missingStructureRow patientId courseId planId metricId requestedStructureId mayoQuery unitName =
+        {
+            PatientId = patientId
+            CourseId = courseId
+            PlanId = planId
+            RequestedStructureId = requestedStructureId
+            ActualStructureId = ""
+            MetricId = metricId
+            MayoQuery = mayoQuery
+            Value = ""
+            Unit = unitName
+            Status = "MissingStructure"
+            Error = sprintf "Structure id not found by exact or normalized lookup: %s" requestedStructureId
+        }
+
+    /// Creates an error metric row.
+    let errorRow patientId courseId planId metricId requestedStructureId actualStructureId mayoQuery unitName error =
+        {
+            PatientId = patientId
+            CourseId = courseId
+            PlanId = planId
+            RequestedStructureId = requestedStructureId
+            ActualStructureId = actualStructureId
+            MetricId = metricId
+            MayoQuery = mayoQuery
+            Value = ""
+            Unit = unitName
+            Status = "Error"
+            Error = error
+        }
+
+    /// Creates a successful metric row.
+    let okRow patientId courseId planId metricId requestedStructureId actualStructureId mayoQuery unitName status (value: float) =
+        {
+            PatientId = patientId
+            CourseId = courseId
+            PlanId = planId
+            RequestedStructureId = requestedStructureId
+            ActualStructureId = actualStructureId
+            MetricId = metricId
+            MayoQuery = mayoQuery
+            Value = value.ToString("0.###", CultureInfo.InvariantCulture)
+            Unit = unitName
+            Status = status
+            Error = ""
+        }
+
+    /// Extracts one metric from one plan using ESAPIX Mayo query.
+    let extractMetric patientId courseId (plan: PlanSetup) (metric: MetricDefinition) =
+        let requestedStructureId = metricStructureId metric
+
+        match metric.Kind with
+        | MayoQuery(query, _) ->
+            try
+                match tryFindStructureForMetric plan requestedStructureId with
+                | None ->
+                    missingStructureRow patientId courseId plan.Id metric.Id requestedStructureId query metric.Unit
+                | Some structureMatch ->
+                    let value = plan.ExecuteQuery(query, structureMatch.Structure)
+
+                    if Double.IsNaN(value) || Double.IsInfinity(value) then
+                        errorRow
+                            patientId
+                            courseId
+                            plan.Id
+                            metric.Id
+                            requestedStructureId
+                            structureMatch.ActualStructureId
+                            query
+                            metric.Unit
+                            (sprintf "ESAPIX Mayo query returned invalid value for query %s" query)
+                    else
+                        let status =
+                            match structureMatch.MatchKind with
+                            | "Exact" -> "OkExact"
+                            | "Normalized" -> "OkNormalized"
+                            | other -> "Ok" + other
+
+                        okRow
+                            patientId
+                            courseId
+                            plan.Id
+                            metric.Id
+                            requestedStructureId
+                            structureMatch.ActualStructureId
+                            query
+                            metric.Unit
+                            status
+                            value
+            with ex ->
+                errorRow
+                    patientId
+                    courseId
+                    plan.Id
+                    metric.Id
+                    requestedStructureId
+                    ""
+                    query
+                    metric.Unit
+                    (sprintf "ESAPIX Mayo query failed for query %s: %s" query ex.Message)
+
+    /// Extracts all configured metrics from one plan.
+    let extractPlanMetrics patientId (course: Course, plan: PlanSetup) =
+        Config.metrics |> List.map (extractMetric patientId course.Id plan)
+
+    /// Extracts all configured metrics from one patient.
+    let extractPatient (app: Application) patientId =
+        result {
+            let! patient = openPatientById app patientId
+
+            try
+                let rows = getMatchingPlans patient |> List.collect (extractPlanMetrics patientId)
+                return rows
+            finally
+                closePatient app
+        }
+
+
+==================== C:\Dev\projects\functional-esapi-pqm-extractor\Functional.Esapi.PqmExtractor.fsproj ====================
+
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>$(MSBuildProjectName).esapi</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FsToolkit.ErrorHandling" Version="4.*" />
+    <PackageReference Include="ESAPIX_16.1" Version="1.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="VMS.TPS.Common.Model.API">
+      <HintPath>C:\Program Files (x86)\Varian\RTM\18.1\esapi\API\VMS.TPS.Common.Model.API.dll</HintPath>
+    </Reference>
+    <Reference Include="VMS.TPS.Common.Model.Types">
+      <HintPath>C:\Program Files (x86)\Varian\RTM\18.1\esapi\API\VMS.TPS.Common.Model.Types.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Domain.fs" />
+    <Compile Include="Config.fs" />
+    <Compile Include="Text.fs" />
+    <Compile Include="Csv.fs" />
+    <Compile Include="EsapiQuery.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>
+
+
+==================== C:\Dev\projects\functional-esapi-pqm-extractor\Program.fs ====================
+
+namespace Functional.Esapi.PqmExtractor
+
+open System
+open System.Globalization
+open System.IO
+open System.Text
+open VMS.TPS.Common.Model.API
+
+module Program =
+
+    /// Represents one accepted plan and structure debug row.
+    type PlanDebugRow =
+        {
+            PatientId: string
+            CourseId: string
+            PlanId: string
+            RequestedStructureId: string
+            ActualStructureId: string
+            MatchKind: string
+            StructureVolumeCc: string
+            HasDose: string
+            MayoQuery: string
+            MetricId: string
+        }
+
+    /// Gets the metric CSV path on the current user's desktop.
+    let getDesktopCsvPath () =
+        let desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+        Path.Combine(desktop, "pqm_extract.csv")
+
+    /// Gets the debug CSV path on the current user's desktop.
+    let getDesktopDebugCsvPath () =
+        let desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+        Path.Combine(desktop, "pqm_plan_debug.csv")
+
+    /// Keeps the console window open so terminal output stays visible.
+    let pauseBeforeExit () =
+        printfn ""
+        printf "Press Enter to exit..."
+        Console.ReadLine() |> ignore
+
+    /// Gets the structure id from one configured metric definition.
+    let configMetricStructureId (metric: MetricDefinition) =
+        match metric.Kind with
+        | MayoQuery(_, structureId) -> structureId
+
+    /// Gets whether the plan has dose available.
+    let hasDose (plan: PlanSetup) =
+        if isNull plan.Dose then "false" else "true"
+
+    /// Gets the display volume text for one structure.
+    let structureVolumeText (structure: Structure) =
+        structure.Volume.ToString("0.###", CultureInfo.InvariantCulture)
+
+    /// Creates one plan-debug row for one accepted plan metric.
+    let createPlanDebugRow patientId (course: Course) (plan: PlanSetup) (metric: MetricDefinition) =
+        let requestedStructureId = configMetricStructureId metric
+        let mayoQuery =
+            match metric.Kind with
+            | MayoQuery(query, _) -> query
+
+        match EsapiQuery.tryFindStructureForMetric plan requestedStructureId with
+        | None ->
+            {
+                PatientId = patientId
+                CourseId = course.Id
+                PlanId = plan.Id
+                RequestedStructureId = requestedStructureId
+                ActualStructureId = ""
+                MatchKind = "Missing"
+                StructureVolumeCc = "MissingStructure"
+                HasDose = hasDose plan
+                MayoQuery = mayoQuery
+                MetricId = metric.Id
+            }
+        | Some structureMatch ->
+            {
+                PatientId = patientId
+                CourseId = course.Id
+                PlanId = plan.Id
+                RequestedStructureId = requestedStructureId
+                ActualStructureId = structureMatch.ActualStructureId
+                MatchKind = structureMatch.MatchKind
+                StructureVolumeCc = structureVolumeText structureMatch.Structure
+                HasDose = hasDose plan
+                MayoQuery = mayoQuery
+                MetricId = metric.Id
+            }
+
+    /// Creates debug rows for accepted plan structures.
+    let createPlanDebugRows patientId (course: Course, plan: PlanSetup) =
+        Config.metrics |> List.map (createPlanDebugRow patientId course plan)
+
+    /// Converts one plan debug row to a CSV line.
+    let debugRowToCsv (row: PlanDebugRow) =
+        [
+            row.PatientId
+            row.CourseId
+            row.PlanId
+            row.RequestedStructureId
+            row.ActualStructureId
+            row.MatchKind
+            row.StructureVolumeCc
+            row.HasDose
+            row.MayoQuery
+            row.MetricId
+        ]
+        |> List.map Csv.escape
+        |> String.concat ","
+
+    /// Writes plan debug rows to the target CSV path.
+    let writeDebugRows (path: string) (rows: PlanDebugRow list) =
+        let header = "PatientId,CourseId,PlanId,RequestedStructureId,ActualStructureId,MatchKind,StructureVolumeCc,HasDose,MayoQuery,MetricId"
+        let lines = rows |> List.map debugRowToCsv
+        File.WriteAllLines(path, header :: lines, Encoding.UTF8)
+
+    /// Creates error rows for a patient-level failure.
+    let patientErrorRows patientId error =
+        Config.metrics
+        |> List.map (fun metric ->
+            {
+                PatientId = patientId
+                CourseId = ""
+                PlanId = ""
+                RequestedStructureId = configMetricStructureId metric
+                ActualStructureId = ""
+                MetricId = metric.Id
+                MayoQuery =
+                    match metric.Kind with
+                    | MayoQuery(query, _) -> query
+                Value = ""
+                Unit = metric.Unit
+                Status = "PatientError"
+                Error = error
+            })
+
+    /// Extracts accepted-plan debug rows from one patient.
+    let extractPatientDebugRows (app: Application) patientId =
+        match EsapiQuery.openPatientById app patientId with
+        | Error error -> Error error
+        | Ok patient ->
+            try
+                let plans = EsapiQuery.getMatchingPlans patient
+                let debugRows = plans |> List.collect (createPlanDebugRows patientId)
+                Ok debugRows
+            finally
+                EsapiQuery.closePatient app
+
+    /// Writes status and match-kind summaries to the console.
+    let printSummary label keyName values =
+        printfn "%s" label
+
+        values
+        |> Seq.countBy id
+        |> Seq.sortBy fst
+        |> Seq.iter (fun (key, count) -> printfn "  %s=%s Count=%d" keyName key count)
+
+    /// Creates the ESAPI application session.
+    let createApplication () =
+        try
+            Ok(Application.CreateApplication())
+        with ex ->
+            Error(sprintf "Application.CreateApplication failed: %s" (ex.ToString()))
+
+    /// Runs the full extraction workflow.
+    let run () =
+        let outputPath = getDesktopCsvPath ()
+        let debugPath = getDesktopDebugCsvPath ()
+        printfn "Creating ESAPI application session..."
+
+        match createApplication () with
+        | Error error -> failwith error
+        | Ok app ->
+            use app = app
+
+            let patientResults =
+                Config.patientIds
+                |> List.map (fun patientId ->
+                    printfn "Extracting %s" patientId
+
+                    let metricRows =
+                        match EsapiQuery.extractPatient app patientId with
+                        | Ok rows -> rows
+                        | Error error ->
+                            EsapiQuery.closePatient app
+                            patientErrorRows patientId error
+
+                    let debugRows =
+                        match extractPatientDebugRows app patientId with
+                        | Ok rows -> rows
+                        | Error error ->
+                            printfn "Debug extraction skipped for %s: %s" patientId error
+                            EsapiQuery.closePatient app
+                            []
+
+                    metricRows, debugRows)
+
+            let rows = patientResults |> List.collect fst
+            let debugRows = patientResults |> List.collect snd
+
+            Csv.writeRows outputPath rows
+            writeDebugRows debugPath debugRows
+            printfn "Wrote %d metric rows to %s" rows.Length outputPath
+            printSummary "Metric status summary:" "Status" (rows |> Seq.map (fun row -> row.Status))
+            printfn "Wrote %d debug rows to %s" debugRows.Length debugPath
+            printSummary "Debug match summary:" "MatchKind" (debugRows |> Seq.map (fun row -> row.MatchKind))
+            0
+
+    /// Runs the console entry point.
+    [<EntryPoint; STAThread>]
+    let main _ =
+        let exitCode =
+            try
+                printfn "Starting PQM extraction..."
+                run ()
+            with ex ->
+                eprintfn "Fatal error: %s" (ex.ToString())
+                1
+
+        try
+            Console.Out.Flush()
+            Console.Error.Flush()
+            exitCode
+        finally
+            pauseBeforeExit ()
+
+
+==================== C:\Dev\projects\functional-esapi-pqm-extractor\Text.fs ====================
+
+namespace Functional.Esapi.PqmExtractor
+
+open System
+
+module Text =
+
+    /// Checks whether text contains a token using ordinal ignore-case comparison.
+    let containsIgnoreCase (token: string) (text: string) =
+        if String.IsNullOrWhiteSpace token then true
+        else
+            let source = if isNull text then "" else text
+            source.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0
+
+    /// Checks whether text does not contain a token using ordinal ignore-case comparison.
+    let notContainsIgnoreCase (token: string) (text: string) = containsIgnoreCase token text |> not

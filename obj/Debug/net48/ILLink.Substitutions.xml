@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<linker>
+  <assembly fullname="Functional.Esapi.PqmExtractor.esapi">
+    <resource name="FSharpSignatureData.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpSignatureCompressedData.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpSignatureDataB.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpSignatureCompressedDataB.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpOptimizationData.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpOptimizationCompressedData.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpOptimizationDataB.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpOptimizationCompressedDataB.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpOptimizationInfo.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+    <resource name="FSharpSignatureInfo.Functional.Esapi.PqmExtractor.esapi" action="remove"></resource>
+  </assembly>
+</linker>
