@@ -33,6 +33,7 @@ type MetricRow =
         MetricId: string
         OriginalPrescriptionGy: string
         IntendedFractions: string
+        CurrentFractions: string
         MayoQuery: string
         FullCourseDoseThresholdGy: string
         RawValue: string

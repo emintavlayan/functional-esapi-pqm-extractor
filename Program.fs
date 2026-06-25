@@ -271,6 +271,7 @@ module Program =
                 MetricId = metric.Id
                 OriginalPrescriptionGy = ""
                 IntendedFractions = ""
+                CurrentFractions = ""
                 MayoQuery = ""
                 FullCourseDoseThresholdGy = ""
                 RawValue = ""

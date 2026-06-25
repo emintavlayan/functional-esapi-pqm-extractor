@@ -35,7 +35,7 @@ module MetricExtraction =
             Prescription.buildDoseAtVolumeMayoQuery volumeCc
 
     /// Creates one metric error row.
-    let errorRow patientId courseId planId metricId requestedStructureId actualStructureId originalPrescriptionGy intendedFractions fullCourseDoseThresholdGy mayoQuery unitName error =
+    let errorRow patientId courseId planId metricId requestedStructureId actualStructureId originalPrescriptionGy intendedFractions currentFractions fullCourseDoseThresholdGy mayoQuery rawValue value normalizationFactor unitName error =
         {
             PatientId = patientId
             CourseId = courseId
@@ -46,18 +46,19 @@ module MetricExtraction =
             MetricId = metricId
             OriginalPrescriptionGy = originalPrescriptionGy
             IntendedFractions = intendedFractions
+            CurrentFractions = currentFractions
             MayoQuery = mayoQuery
             FullCourseDoseThresholdGy = fullCourseDoseThresholdGy
-            RawValue = ""
-            Value = ""
-            NormalizationFactor = ""
+            RawValue = rawValue
+            Value = value
+            NormalizationFactor = normalizationFactor
             Unit = unitName
             Status = "Error"
             Error = error
         }
 
     /// Creates one metric missing-structure row.
-    let missingStructureRow patientId courseId planId metricId requestedStructureId originalPrescriptionGy intendedFractions fullCourseDoseThresholdGy mayoQuery unitName =
+    let missingStructureRow patientId courseId planId metricId requestedStructureId originalPrescriptionGy intendedFractions currentFractions fullCourseDoseThresholdGy mayoQuery unitName =
         {
             PatientId = patientId
             CourseId = courseId
@@ -68,6 +69,7 @@ module MetricExtraction =
             MetricId = metricId
             OriginalPrescriptionGy = originalPrescriptionGy
             IntendedFractions = intendedFractions
+            CurrentFractions = currentFractions
             MayoQuery = mayoQuery
             FullCourseDoseThresholdGy = fullCourseDoseThresholdGy
             RawValue = ""
@@ -79,7 +81,7 @@ module MetricExtraction =
         }
 
     /// Creates one successful metric row.
-    let okRow patientId courseId planId metricId requestedStructureId actualStructureId originalPrescriptionGy intendedFractions fullCourseDoseThresholdGy mayoQuery unitName status rawValue value normalizationFactor =
+    let okRow patientId courseId planId metricId requestedStructureId actualStructureId originalPrescriptionGy intendedFractions currentFractions fullCourseDoseThresholdGy mayoQuery unitName status rawValue value normalizationFactor =
         {
             PatientId = patientId
             CourseId = courseId
@@ -90,6 +92,7 @@ module MetricExtraction =
             MetricId = metricId
             OriginalPrescriptionGy = originalPrescriptionGy
             IntendedFractions = intendedFractions
+            CurrentFractions = currentFractions
             MayoQuery = mayoQuery
             FullCourseDoseThresholdGy = fullCourseDoseThresholdGy
             RawValue = floatText rawValue
@@ -113,7 +116,11 @@ module MetricExtraction =
             ""
             ""
             ""
+            ""
             (fullCourseDoseThresholdGyText metric)
+            ""
+            ""
+            ""
             ""
             metric.Unit
             error
@@ -125,11 +132,28 @@ module MetricExtraction =
         | "Normalized" -> "OkNormalized"
         | other -> "Ok" + other
 
+    /// Gets the current plan fraction count when it is available and non-zero.
+    let currentFractions (plan: PlanSetup) =
+        try
+            let value = plan.NumberOfFractions
+
+            if value.HasValue && value.Value > 0 then
+                Ok value.Value
+            else
+                Error(sprintf "Current plan %s has missing or zero NumberOfFractions." plan.Id)
+        with ex ->
+            Error(sprintf "Could not read NumberOfFractions for plan %s: %s" plan.Id ex.Message)
+
     /// Extracts one configured metric from one plan using the ESAPIX Mayo backend.
     let extractMetric patientId courseId (plan: PlanSetup) (prescription: PrescriptionContext) (metric: MetricDefinition) =
         let requestedStructureId = metricStructureId metric
         let originalPrescriptionGy = floatText prescription.OriginalPrescriptionGy
         let intendedFractions = string prescription.IntendedFractions
+        let currentFractionsResult = currentFractions plan
+        let currentFractionsText =
+            match currentFractionsResult with
+            | Ok value -> string value
+            | Error _ -> ""
         let fullCourseDoseThresholdGy = fullCourseDoseThresholdGyText metric
         let mayoQuery = buildMayoQuery prescription metric
 
@@ -144,6 +168,7 @@ module MetricExtraction =
                     requestedStructureId
                     originalPrescriptionGy
                     intendedFractions
+                    currentFractionsText
                     fullCourseDoseThresholdGy
                     mayoQuery
                     metric.Unit
@@ -160,27 +185,75 @@ module MetricExtraction =
                         structureMatch.ActualStructureId
                         originalPrescriptionGy
                         intendedFractions
+                        currentFractionsText
                         fullCourseDoseThresholdGy
                         mayoQuery
+                        ""
+                        ""
+                        ""
                         metric.Unit
                         (sprintf "ESAPIX Mayo query returned invalid value for query %s" mayoQuery)
                 else
-                    okRow
-                        patientId
-                        courseId
-                        plan.Id
-                        metric.Id
-                        requestedStructureId
-                        structureMatch.ActualStructureId
-                        originalPrescriptionGy
-                        intendedFractions
-                        fullCourseDoseThresholdGy
-                        mayoQuery
-                        metric.Unit
-                        (statusFromMatchKind structureMatch.MatchKind)
-                        rawValue
-                        rawValue
-                        1.0
+                    match metric.Kind with
+                    | RelativeVolumeAtFullCourseDose _ ->
+                        okRow
+                            patientId
+                            courseId
+                            plan.Id
+                            metric.Id
+                            requestedStructureId
+                            structureMatch.ActualStructureId
+                            originalPrescriptionGy
+                            intendedFractions
+                            currentFractionsText
+                            fullCourseDoseThresholdGy
+                            mayoQuery
+                            metric.Unit
+                            (statusFromMatchKind structureMatch.MatchKind)
+                            rawValue
+                            rawValue
+                            1.0
+                    | DoseAtVolumeNeedsFractionNormalization _ ->
+                        match currentFractionsResult with
+                        | Ok currentPlanFractions ->
+                            let normalizationFactor = float prescription.IntendedFractions / float currentPlanFractions
+                            let normalizedValue = rawValue * normalizationFactor
+
+                            okRow
+                                patientId
+                                courseId
+                                plan.Id
+                                metric.Id
+                                requestedStructureId
+                                structureMatch.ActualStructureId
+                                originalPrescriptionGy
+                                intendedFractions
+                                currentFractionsText
+                                fullCourseDoseThresholdGy
+                                mayoQuery
+                                metric.Unit
+                                (statusFromMatchKind structureMatch.MatchKind)
+                                rawValue
+                                normalizedValue
+                                normalizationFactor
+                        | Error error ->
+                            errorRow
+                                patientId
+                                courseId
+                                plan.Id
+                                metric.Id
+                                requestedStructureId
+                                structureMatch.ActualStructureId
+                                originalPrescriptionGy
+                                intendedFractions
+                                currentFractionsText
+                                fullCourseDoseThresholdGy
+                                mayoQuery
+                                (floatText rawValue)
+                                ""
+                                ""
+                                metric.Unit
+                                error
         with ex ->
             errorRow
                 patientId
@@ -191,8 +264,12 @@ module MetricExtraction =
                 ""
                 originalPrescriptionGy
                 intendedFractions
+                currentFractionsText
                 fullCourseDoseThresholdGy
                 mayoQuery
+                ""
+                ""
+                ""
                 metric.Unit
                 (sprintf "ESAPIX Mayo query failed for query %s: %s" mayoQuery ex.Message)
 
