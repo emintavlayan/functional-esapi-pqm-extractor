@@ -32,3 +32,4 @@ C:\Dev\projects\functional-esapi-pqm-extractor\obj\Debug\net48\Functional.Esapi.
 C:\Dev\projects\functional-esapi-pqm-extractor\bin\Debug\net48\ESAPIX.dll
 C:\Dev\projects\functional-esapi-pqm-extractor\bin\Debug\net48\Newtonsoft.Json.dll
 C:\Dev\projects\functional-esapi-pqm-extractor\bin\Debug\net48\System.ValueTuple.dll
+C:\Dev\projects\functional-esapi-pqm-extractor\obj\Debug\net48\Functional.Esapi.PqmExtractor.sourcelink.json

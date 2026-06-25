@@ -20,9 +20,9 @@ module Config =
     /// Returns the hardcoded plan-quality metrics.
     let metrics =
         [
-            { Id = "V95% PTV2"; Kind = MayoQuery("V95%[%]", "PTV2"); Unit = "%" }
-            { Id = "V95% PTV3"; Kind = MayoQuery("V95%[%]", "PTV3"); Unit = "%" }
-            { Id = "V107% PTV2-PTV1"; Kind = MayoQuery("V107%[%]", "PTV2-PTV1"); Unit = "%" }
-            { Id = "V107% PTV3-PTV2"; Kind = MayoQuery("V107%[%]", "PTV3-PTV2"); Unit = "%" }
-            { Id = "D1.8cm3 PTV1"; Kind = MayoQuery("D1.8cc[Gy]", "PTV1"); Unit = "Gy" }
+            { Id = "V95% PTV2"; Kind = RelativeVolumeAtFullCourseDose(57.0, "PTV2"); Unit = "%" }
+            { Id = "V95% PTV3"; Kind = RelativeVolumeAtFullCourseDose(47.5, "PTV3"); Unit = "%" }
+            { Id = "V107% PTV2-PTV1"; Kind = RelativeVolumeAtFullCourseDose(64.2, "PTV2-PTV1"); Unit = "%" }
+            { Id = "V107% PTV3-PTV2"; Kind = RelativeVolumeAtFullCourseDose(53.5, "PTV3-PTV2"); Unit = "%" }
+            { Id = "D1.8cm3 PTV1"; Kind = DoseAtVolumeNeedsFractionNormalization(1.8, "PTV1"); Unit = "Gy" }
         ]

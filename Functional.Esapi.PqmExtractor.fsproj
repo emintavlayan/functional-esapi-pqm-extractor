@@ -24,6 +24,8 @@
     <Compile Include="Text.fs" />
     <Compile Include="Csv.fs" />
     <Compile Include="EsapiQuery.fs" />
+    <Compile Include="Prescription.fs" />
+    <Compile Include="MetricExtraction.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 </Project>

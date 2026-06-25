@@ -10,7 +10,7 @@ open System.Reflection
 [<assembly: System.Reflection.AssemblyCompanyAttribute("Functional.Esapi.PqmExtractor.esapi")>]
 [<assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")>]
 [<assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")>]
-[<assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")>]
+[<assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+97eb7f38ccb5ccf46d8918cc44cfc911ab81c62b")>]
 [<assembly: System.Reflection.AssemblyProductAttribute("Functional.Esapi.PqmExtractor.esapi")>]
 [<assembly: System.Reflection.AssemblyTitleAttribute("Functional.Esapi.PqmExtractor.esapi")>]
 [<assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")>]

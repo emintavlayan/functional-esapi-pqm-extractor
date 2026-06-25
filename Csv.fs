@@ -24,8 +24,13 @@ module Csv =
             row.RequestedStructureId
             row.ActualStructureId
             row.MetricId
+            row.OriginalPrescriptionGy
+            row.IntendedFractions
             row.MayoQuery
+            row.FullCourseDoseThresholdGy
+            row.RawValue
             row.Value
+            row.NormalizationFactor
             row.Unit
             row.Status
             row.Error
@@ -35,6 +40,6 @@ module Csv =
 
     /// Writes metric rows to the target CSV path.
     let writeRows (path: string) (rows: MetricRow list) =
-        let header = "PatientId,CourseId,PlanId,Backend,RequestedStructureId,ActualStructureId,MetricId,MayoQuery,Value,Unit,Status,Error"
+        let header = "PatientId,CourseId,PlanId,Backend,RequestedStructureId,ActualStructureId,MetricId,OriginalPrescriptionGy,IntendedFractions,MayoQuery,FullCourseDoseThresholdGy,RawValue,Value,NormalizationFactor,Unit,Status,Error"
         let lines = rows |> List.map rowToCsv
         File.WriteAllLines(path, header :: lines, Encoding.UTF8)

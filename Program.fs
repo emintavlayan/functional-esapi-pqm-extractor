@@ -69,7 +69,14 @@ module Program =
     /// Gets the structure id from one configured metric definition.
     let configMetricStructureId (metric: MetricDefinition) =
         match metric.Kind with
-        | MayoQuery(_, structureId) -> structureId
+        | RelativeVolumeAtFullCourseDose(_, structureId) -> structureId
+        | DoseAtVolumeNeedsFractionNormalization(_, structureId) -> structureId
+
+    /// Gets the final Mayo query text for one plan-debug row when prescription inference succeeds.
+    let debugMayoQuery (plan: PlanSetup) (metric: MetricDefinition) =
+        match Prescription.findOriginalPrescriptionFromPtv1 plan with
+        | Ok prescription -> MetricExtraction.buildMayoQuery prescription metric
+        | Error _ -> ""
 
     /// Gets whether the plan has dose available.
     let hasDose (plan: PlanSetup) =
@@ -115,9 +122,7 @@ module Program =
     /// Creates one plan-debug row for one accepted plan metric.
     let createPlanDebugRow patientId (course: Course) (plan: PlanSetup) (metric: MetricDefinition) =
         let requestedStructureId = configMetricStructureId metric
-        let mayoQuery =
-            match metric.Kind with
-            | MayoQuery(query, _) -> query
+        let mayoQuery = debugMayoQuery plan metric
 
         try
             match EsapiQuery.tryFindStructureForMetric plan requestedStructureId with
@@ -264,10 +269,13 @@ module Program =
                 RequestedStructureId = configMetricStructureId metric
                 ActualStructureId = ""
                 MetricId = metric.Id
-                MayoQuery =
-                    match metric.Kind with
-                    | MayoQuery(query, _) -> query
+                OriginalPrescriptionGy = ""
+                IntendedFractions = ""
+                MayoQuery = ""
+                FullCourseDoseThresholdGy = ""
+                RawValue = ""
                 Value = ""
+                NormalizationFactor = ""
                 Unit = metric.Unit
                 Status = "PatientError"
                 Error = error
@@ -320,7 +328,7 @@ module Program =
                     printfn "Extracting %s" patientId
 
                     let metricRows =
-                        match EsapiQuery.extractPatient app patientId with
+                        match MetricExtraction.extractPatient app patientId with
                         | Ok rows -> rows
                         | Error error ->
                             EsapiQuery.closePatient app

@@ -2,7 +2,8 @@ namespace Functional.Esapi.PqmExtractor
 
 /// Represents the supported metric calculation kinds.
 type MetricKind =
-    | MayoQuery of query: string * structureId: string
+    | RelativeVolumeAtFullCourseDose of fullCourseDoseGy: float * structureId: string
+    | DoseAtVolumeNeedsFractionNormalization of volumeCc: float * structureId: string
 
 /// Represents one configured metric definition.
 type MetricDefinition =
@@ -10,6 +11,14 @@ type MetricDefinition =
         Id: string
         Kind: MetricKind
         Unit: string
+    }
+
+/// Represents one original prescription context inferred from PTV1.
+type PrescriptionContext =
+    {
+        OriginalPrescriptionGy: float
+        IntendedFractions: int
+        ActualPtv1StructureId: string
     }
 
 /// Represents one extracted metric row in the CSV output.
@@ -22,8 +31,13 @@ type MetricRow =
         RequestedStructureId: string
         ActualStructureId: string
         MetricId: string
+        OriginalPrescriptionGy: string
+        IntendedFractions: string
         MayoQuery: string
+        FullCourseDoseThresholdGy: string
+        RawValue: string
         Value: string
+        NormalizationFactor: string
         Unit: string
         Status: string
         Error: string
